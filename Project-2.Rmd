@@ -1,0 +1,1325 @@
+---
+title: "Project 2"
+author: "Yang Yang"
+date: "11/07/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/Dissertation/Project 2")
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(patchwork)
+library(factoextra)
+library(caret)
+library(corrplot)
+library(DESeq2) # browseVignettes("DESeq2")
+```
+
+# Exploratory & initial data analysis
+
+## 1 Do replicate samples have similar gene expression, or is there a systematic bias?
+
+```{r}
+motif <- read.csv("H99_all_genes_promoter_500nt_4mer_counts.csv")
+sample <- read.csv("crypto_wake_up_sample_sheet.csv")
+expression <- read.csv("CW_kallisto_abundance_fold_change_long_by_gene.csv")
+```
+
+### Remove the genes whose samples have 0 observations.
+
+```{r}
+# expression and sample
+counts <- merge(expression, sample, by = "code")
+# merge three datasets
+counts <- cbind(counts, tpm = counts$TPM) # tpm is a column of TPM that is going to be corrected
+all_data <- merge(counts, motif, by.x = "gene", by.y = "Gene")
+
+# select the genes with 0 observations
+gene_0 <- all_data %>% 
+  filter(TPM == 0) %>%
+  distinct(gene)
+# 3240 genes have zero values
+
+head(gene_0)
+
+# remove the genes with 0 observations
+data <- all_data %>%
+  filter(!gene %in% gene_0$gene)
+dim(data) 
+# we got 176832 observations finally
+```
+
+
+```{r, warning=FALSE}
+ggplot(
+  data,
+  aes(
+    x = log(TPM+1),
+    color = rep
+  )
+) +
+  geom_density() +
+  labs(
+    title = "Density plot of rep A and B in 2 media and 6 time points"
+  ) +
+  facet_grid(medium ~ time)
+
+ggplot(
+  data,
+  aes(
+    x = log(TPM+1),
+    color = rep
+  )
+) +
+  geom_density() +
+  labs(
+    title = "Density plot of rep A and B in 3 temperatures and 6 time points"
+  ) +
+  facet_grid(temp ~ time)
+
+ggplot(
+  data,
+  aes(
+    x = as.factor(time),
+    y = log(TPM+1),
+    fill = as.factor(time)
+  )
+) +
+  geom_boxplot() +
+  labs(
+    x = "time",
+    title = "Boxplot of log(TPM+1) in two media"
+  ) +
+  facet_grid(~ medium) +
+  ggthemes::scale_fill_gdocs() +
+  theme_minimal()
+
+ggplot(
+  data,
+  aes(
+    x = temp,
+    y = log(TPM+1),
+    fill = as.factor(time)
+  )
+) +
+  geom_boxplot() +
+  labs(
+    x = "time",
+    title = "Boxplot of log(TPM+1) under three temperatures"
+  ) +
+  ggthemes::scale_fill_gdocs() +
+  theme_minimal()
+```
+
+
+## Check the expression of random genes
+
+```{r, message=FALSE}
+set.seed(1000)
+ind <- sample(1:8152, 5)
+ran_genes <- motif$Gene[ind]
+data_0 <- data[data$gene %in% ran_genes,]
+
+for (i in ran_genes){
+a1 <- data_0 %>% 
+  filter(gene == i, medium == "RPMI+") %>%
+  select(1:10) %>%
+  group_by(time, temp, rep) %>%
+  summarise(mean(TPM), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(TPM)`,
+      color = temp,
+      group = temp
+    )
+) +
+  geom_point() +
+  geom_line() +
+  facet_grid(~ rep) +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("RPMI+") + 
+  labs(x = "time", y = "TPM") +
+  guides(color = "none")
+
+a2 <- data_0 %>% 
+  filter(gene == i, medium == "YPD") %>%
+  select(1:10) %>%
+  group_by(time, temp, rep) %>%
+  summarise(mean(TPM), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(TPM)`,
+      color = temp,
+      group = temp
+    )
+) +
+  geom_point() +
+  geom_line() +
+  facet_grid(~ rep) +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("YPD") + 
+  labs(x = "time", y = "TPM")
+
+a3 <- data_0 %>% 
+  filter(gene == i, temp == "37C") %>%
+  select(1:10) %>%
+  group_by(time, medium, rep) %>%
+  summarise(mean(TPM), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(TPM)`,
+      color = medium,
+      group = medium
+    )
+) +
+  geom_point() +
+  geom_line() +
+  facet_grid(~ rep) +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("37C") + 
+  labs(x = "time", y = "TPM") +
+  guides(color = "none")
+
+a4 <- data_0 %>% 
+  filter(gene == i, temp == "25C") %>%
+  select(1:10) %>%
+  group_by(time, medium, rep) %>%
+  summarise(mean(TPM), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(TPM)`,
+      color = medium,
+      group = medium
+    )
+) +
+  geom_point() +
+  geom_line() +
+  facet_grid(~ rep) +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("25C") + 
+  labs(x = "time", y = "TPM")
+
+print(a1+a2+a3+a4)
+}
+
+
+```
+
+## Bias correlation
+
+```{r}
+# fix a condition where there is a bias between replicates 
+# y1 - a vector of log fold change, or log(tpm+1) or log(esp.counts+1) for replicate A and all genes (you may need to deal with NAs) 
+# y2 - a vector of log fold change, or log(tpm+1) or log(esp.counts+1) for replicate B and all genes (you may need to deal with NAs)
+
+# the order of the genes in y1 and y2 shoudl be the same, in particular lengths of y1 and y2 are the same
+
+# fit a smoothing spline for the difference y2-y1 # lambda is a smoothing parameter ss = smooth.spline(y2, y1-y2, lambda =0.01)
+```
+
+### 1. YPD 30C 180
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="30C", time==180, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="30C", time==180, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YW18A - YW18B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 2. YPD 25C 0
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="25C", time==0, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="25C", time==0, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YC00A - YC00B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 4) 
+abline(h=0, col=4, lwd=4)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "YC00A",]$tpm <- exp(y1.new) - 1
+data[data$code == "YC00B",]$tpm <- exp(y2.new) - 1
+```
+
+### 3. YPD 25C 10
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="25C", time==10, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="25C", time==10, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YC01A - YC01B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 4. YPD 25C 30
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="25C", time==30, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="25C", time==30, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YC03A - YC03B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 5. YPD 25C 60
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="25C", time==60, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="25C", time==60, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YC06A - YC06B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 6. YPD 25C	120
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="25C", time==120, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="25C", time==120, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YC12A - YC12B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 7. YPD 37C 10
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="37C", time==10, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="37C", time==10, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YH01A - YH01B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 8. YPD 37C 30
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="37C", time==30, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="37C", time==30, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YH03A - YH03B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 9. YPD 37C 60
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="37C", time==60, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="37C", time==60, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YH06A - YH06B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 4) 
+abline(h=0, col=4, lwd=4)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "YH06A",]$tpm <- exp(y1.new) - 1
+data[data$code == "YH06B",]$tpm <- exp(y2.new) - 1
+```
+
+### 10. YPD 37C 120
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="YPD", temp=="37C", time==120, rep=="A")
+rep_B <- data %>%
+  filter(medium =="YPD", temp=="37C", time==120, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "YH12A - YH12B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 4) 
+abline(h=0, col=4, lwd=4)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "YH12A",]$tpm <- exp(y1.new) - 1
+data[data$code == "YH12B",]$tpm <- exp(y2.new) - 1
+```
+
+### 11. RPMI+	25C	10
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==10, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==10, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RC01A - RC01B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 4) 
+abline(h=0, col=4, lwd=4)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "RC01A",]$tpm <- exp(y1.new) - 1
+data[data$code == "RC01B",]$tpm <- exp(y2.new) - 1
+```
+
+### 12. RPMI+	25C	30
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==30, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==30, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RC03A - RC03A")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "RC03A",]$tpm <- exp(y1.new) - 1
+data[data$code == "RC03A",]$tpm <- exp(y2.new) - 1
+```
+
+### 13. RPMI+	25C	60
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==60, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==60, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RC06A - RC06B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 14. RPMI+	25C	120
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==120, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="25C", time==120, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RC12A - RC12B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+```
+
+### 15. RPMI+	37C	10
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==10, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==10, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RH01A - RH01B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 4) 
+abline(h=0, col=4, lwd=4)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "RH01A",]$tpm <- exp(y1.new) - 1
+data[data$code == "RH01B",]$tpm <- exp(y2.new) - 1
+```
+
+### 16. RPMI+	37C	30
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==30, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==30, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RH03A - RH03B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "RH03A",]$tpm <- exp(y1.new) - 1
+data[data$code == "RH03B",]$tpm <- exp(y2.new) - 1
+```
+
+### 17. RPMI+	37C	60
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==60, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==60, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RH06A - RH06B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 3) 
+abline(h=0, col=4, lwd=3)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "RH06A",]$tpm <- exp(y1.new) - 1
+data[data$code == "RH06B",]$tpm <- exp(y2.new) - 1
+```
+
+### 18. RPMI+	37C	120
+
+```{r}
+rep_A <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==120, rep=="A")
+rep_B <- data %>%
+  filter(medium =="RPMI+", temp=="37C", time==120, rep=="B")
+
+y1 <- log(rep_A$TPM + 1)
+y2 <- log(rep_B$TPM + 1)
+plot(y2, y1-y2, main = "RH12A - RH12B")
+ss <- smooth.spline(y2, y1-y2, lambda =0.01)
+lines(ss, col=2, lwd = 4) 
+abline(h=0, col=4, lwd=4)
+
+# evaluate bias for each value of y2
+bias <- rep(NA, length(y2)) 
+for(i in 1:length(y2)) {
+  bias[i] <- as.numeric(predict(ss, x=y2[i])$y)
+}
+
+# updated data, corrected for systematic bias 
+y1.new <- y1 - bias
+y2.new <- y2
+
+data[data$code == "RH12A",]$tpm <- exp(y1.new) - 1
+data[data$code == "RH12B",]$tpm <- exp(y2.new) - 1
+```
+
+## PCA
+
+```{r, warning=FALSE}
+# remove the negative values
+data$tpm <- ifelse(data$tpm<0, data$TPM, data$tpm)
+
+summary(data$tpm)
+
+pca_data <- data  %>%
+  select(gene, code, tpm)
+
+y <- log(pca_data$tpm+1)
+pca_data <- cbind(pca_data, y) %>%
+  select(-tpm)
+
+pca_data <- pivot_wider(
+  pca_data,
+  names_from = code, 
+  values_from = y
+)
+
+pca <- prcomp(pca_data[, -1], center = TRUE, scale. = TRUE)
+summary(pca)
+
+perc.expl <- pca$sdev^2 / sum(pca$sdev^2)
+sum(perc.expl[1:7])
+
+fviz_pca_biplot(pca, geom='point', repel = T)
+fviz_pca_biplot(pca, geom='point', axes = c(2, 3), repel = T)
+```
+
+# Q1. Find genes that have different expression across design conditions.
+
+```{r}
+# Add the column tpm to the original data
+all_data[!all_data$gene %in% gene_0$gene,]$tpm <- data$tpm
+
+summary(all_data$tpm)
+```
+
+```{r}
+# Build the dataset used in this question
+data_1 <- data %>%
+  filter(time != 0, time != 180) %>%
+  select(gene, code, rep, tpm) %>%
+  arrange(gene, code)
+
+
+group <- rep(c(rep(1,8), rep(2, 8), rep(3, 8), rep(4, 8)), 4912)
+y <- log(data_1$tpm + 1)
+
+data_1 <- cbind(data_1, group, y)
+
+data_A <- data_1 %>%
+  filter(rep == "A")
+
+data_B <- data_1 %>%
+  filter(rep == "B")
+
+ggplot(
+  data_B,
+  aes(
+    x = y
+    )
+  ) +
+geom_histogram(bins = 30) + 
+labs(x = "log(tpm+1)", title = "Histogram for each group of log(tpm+1)") +
+facet_wrap(~ group, ncol = 2)
+
+summary(log(data_1$tpm+1))
+```
+
+## t-test:
+
+```{r}
+## --------------Fix two condition and compare--------------##
+
+# For each gene, we need to test:
+# group 1 and 2 (fixed medium: RPMI+, different temp: 25C and 37C)
+# group 1 and 3 (fixed temp: 25C, different medium: YPD and RPMI+)
+# group 2 and 4 (fixed temp: 37C, different medium: YPD and RPMI+)
+# group 3 and 4 (fixed medium: YPD, different temp: 25C and 37C)
+
+# Build a data frame to save the p-values
+f1 <- data_1 %>%
+  select(gene) %>%
+  distinct()
+p1 <- p2 <- p3 <- p4 <- rep(0, nrow(f1))
+
+for (i in 1:4912){
+  # group 1 and 2
+  p1[i] <- t.test(y ~ group, data = data_B[(1+16*(i-1)):(8+16*(i-1)),])$p.value
+  # group 1 and 3
+  p2[i] <- t.test(y ~ group, data = data_B[c((1+16*(i-1)):(4+16*(i-1)), (9+16*(i-1)):(12+16*(i-1))), ])$p.value
+  # group 2 and 4
+  p3[i] <- t.test(y ~ group, data = data_B[c((5+16*(i-1)):(8+16*(i-1)), (13+16*(i-1)):(16+16*(i-1))), ])$p.value
+  # group 3 and 4
+  p4[i] <- t.test(y ~ group, data = data_B[(9+16*(i-1)):(16+16*(i-1)),])$p.value
+}
+
+f1 <- cbind(f1, p1, p2, p3, p4)
+
+h1 <- ggplot(
+  f1,
+  aes(
+    x = p1,
+  )
+) +
+  labs(title = "Group 1 and 2") +
+  geom_histogram(bins = 30)
+
+h2 <- ggplot(
+  f1,
+  aes(
+    x = p2,
+  )
+) +
+  labs(title = "Group 1 and 3") +
+  geom_histogram(bins = 30)
+
+h3 <- ggplot(
+  f1,
+  aes(
+    x = p3,
+  )
+) +
+  labs(title = "Group 2 and 4") +
+  geom_histogram(bins = 30)
+
+h4 <- ggplot(
+  f1,
+  aes(
+    x = p4,
+  )
+) +
+  labs(title = "Group 3 and 4") +
+  geom_histogram(bins = 30)
+
+h1 + h2 + h3 + h4
+```
+
+## Present the results:
+
+```{r}
+# fixed medium: RPMI+
+gene_12 <- f1 %>% 
+  select(gene, p1) %>%
+  filter(p1 < 0.05) %>%
+  arrange(p1)
+
+# results
+r12 <- data.frame(gene = gene_12$gene[1:10], 
+                  mean.1 = rep(0, 10),
+                  mean.2 = rep(0, 10),
+                  std.error = rep(0, 10),
+                  p.value = rep(0, 10))
+
+for (i in 1:10){
+  r <- t.test(y ~ group, data = data_B[data_B$gene %in% gene_12$gene[i],][1:8,])
+  r12[i,]$mean.1 <- round(r$estimate[1], 4)
+  r12[i,]$mean.2 <- round(r$estimate[2], 4)
+  r12[i,]$std.error <- round(r$stderr, 4)
+  r12[i,]$p.value <- r$p.value
+}
+
+r12
+
+# fixed temp: 25C
+gene_13 <- f1 %>% 
+  select(gene, p2) %>%
+  filter(p2 < 0.05) %>%
+  arrange(p2)
+
+# results
+r13 <- data.frame(gene = gene_13$gene[1:10], 
+                  mean.1 = rep(0, 10),
+                  mean.3 = rep(0, 10),
+                  std.error = rep(0, 10),
+                  p.value = rep(0, 10))
+
+for (i in 1:10){
+  r <- t.test(y ~ group, 
+              data = data_B[data_B$gene %in% gene_13$gene[i],][c(1:4,9:12),])
+  r13[i,]$mean.1 <- round(r$estimate[1], 4)
+  r13[i,]$mean.3 <- round(r$estimate[2], 4)
+  r13[i,]$std.error <- round(r$stderr, 4)
+  r13[i,]$p.value <- r$p.value
+}
+
+r13
+
+# fixed temp: 37C
+gene_24 <- f1 %>% 
+  select(gene, p3) %>%
+  filter(p3 < 0.05) %>%
+  arrange(p3)
+
+# results
+r24 <- data.frame(gene = gene_24$gene[1:10], 
+                  mean.2 = rep(0, 10),
+                  mean.4 = rep(0, 10),
+                  std.error = rep(0, 10),
+                  p.value = rep(0, 10))
+
+for (i in 1:10){
+  r <- t.test(y ~ group, 
+              data = data_B[data_B$gene %in% gene_24$gene[i],][c(5:8,13:16),])
+  r24[i,]$mean.2 <- round(r$estimate[1], 4)
+  r24[i,]$mean.4 <- round(r$estimate[2], 4)
+  r24[i,]$std.error <- round(r$stderr, 4)
+  r24[i,]$p.value <- r$p.value
+}
+
+r24
+
+# fixed medium: YPD
+gene_34 <- f1 %>% 
+  select(gene, p4) %>%
+  filter(p4 < 0.05) %>%
+  arrange(p4)
+
+# results
+r34 <- data.frame(gene = gene_34$gene[1:10], 
+                  mean.3 = rep(0, 10),
+                  mean.4 = rep(0, 10),
+                  std.error = rep(0, 10),
+                  p.value = rep(0, 10))
+
+for (i in 1:10){
+  r <- t.test(y ~ group, data = data_B[data_B$gene %in% gene_34$gene[i],][9:16,])
+  r34[i,]$mean.3 <- round(r$estimate[1], 4)
+  r34[i,]$mean.4 <- round(r$estimate[2], 4)
+  r34[i,]$std.error <- round(r$stderr, 4)
+  r34[i,]$p.value <- r$p.value
+}
+
+r34
+```
+
+## Visualization:
+
+### 1. For different medium
+
+```{r}
+g1 <- all_data %>% 
+  filter(gene == "CNAG_02048", medium == 	"RPMI+", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, temp) %>%
+  summarize(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = temp,
+      group = temp
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_02048 in RPMI+") + 
+  labs(x = "time", y = "TPM") +
+  guides(color = "none")
+
+g2 <- all_data %>% 
+  filter(gene == "CNAG_03110", medium == 	"RPMI+", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, temp) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = temp,
+      group = temp
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_03110 in RPMI+") + 
+  labs(x = "time", y = "TPM")
+
+g3 <- all_data %>% 
+  filter(time != 0, time != 180) %>%
+  filter(gene == "CNAG_03892", medium == 	"YPD", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, temp) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = temp,
+      group = temp
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_03892 in YPD") + 
+  labs(x = "time", y = "TPM") +
+  guides(color = "none")
+
+
+g4 <- all_data %>% 
+  filter(time != 0, time != 180) %>%
+  filter(gene == "CNAG_05737", medium == 	"YPD", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, temp) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = temp,
+      group = temp
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_05737 in YPD") + 
+  labs(x = "time", y = "TPM")
+
+g1+g2+g3+g4
+```
+
+### 2. For different temperature
+
+```{r}
+g5 <- all_data %>% 
+  filter(time != 0, time != 180) %>%
+  filter(gene == "CNAG_01716", temp == 	"25C", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, medium) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = medium,
+      group = medium
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_01716 in 25C") + 
+  labs(x = "time", y = "TPM") +
+  guides(color = "none")
+
+g6 <- all_data %>% 
+  filter(time != 0, time != 180) %>%
+  filter(gene == "CNAG_03985", temp == 	"25C", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, medium) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = medium,
+      group = medium
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_03985 in 25C") + 
+  labs(x = "time", y = "TPM")
+
+g7 <- all_data %>% 
+  filter(gene == "CNAG_05583", temp == 	"37C", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, medium) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = medium,
+      group = medium
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_05583 in 37C") + 
+  labs(x = "time", y = "TPM") +
+  guides(color = "none")
+
+
+g8 <- all_data %>% 
+  filter(gene == "CNAG_06400", temp == 	"37C", rep == "B") %>%
+  select(1:11, tpm) %>%
+  group_by(time, medium) %>%
+  summarise(mean(tpm), .groups = "keep") %>%
+  ggplot(
+    aes(
+      x = as.factor(time),
+      y = `mean(tpm)`,
+      color = medium,
+      group = medium
+    )
+) +
+  geom_point() +
+  geom_line() +
+  scale_color_brewer(palette= "Paired") +
+  theme_minimal() +
+  ggtitle("CNAG_06400 in 37C") + 
+  labs(x = "time", y = "TPM")
+
+g5+g6+g7+g8
+```
+
+When fixing one condition, genes that have different expression across all design conditions.
+
+```{r}
+intersect(intersect(gene_12$gene, gene_13$gene), intersect(gene_24$gene, gene_34$gene)) # 15 genes
+
+```
+
+
+## Linear models and ANOVA
+
+(fix genes and include all the conditions)
+
+```{r}
+#design matrix
+M <- data.frame(medium = c(rep(0,16), rep(1,16)),
+                temp = c(rep(0,8), rep(1,8), rep(0,8), rep(1,8)),
+                time = c(rep(c(10,10,30,30,60,60,120,120),4)))
+M <- as.data.frame(lapply(M, as.factor))
+M <- as.matrix(M)
+
+#
+data_2 <- data_1 %>%
+  arrange(gene, code)
+
+gene_non_0 <- data_1 %>%
+  select(gene) %>%
+  distinct()
+
+data_lm <- data.frame(y = log(data_2$tpm+1), M)
+
+f2 <- data_1 %>%
+  select(gene) %>%
+  distinct()
+p.medium <- p.temp <- p.time <- rep(0, nrow(f2))
+beta0 <- coef.medium1 <- coef.temp1 <- coef.time120 <- coef.time30 <- coef.time60 <- rep(0, nrow(f2))
+f2 <- cbind(f2, beta0, coef.medium1, coef.temp1, coef.time120, coef.time30, coef.time60, p.medium, p.temp, p.time)
+
+for (i in 1:4912){
+  fit <- lm(y ~ ., data = data_lm[(1+32*(i-1)):(32+32*(i-1)),]) # with intercept
+  f2[i,2:7] <- coef(summary(fit))[,1]
+  f2[i,8:10] <- anova(fit)[1:3,5]
+}
+
+# example
+fit <- lm(y ~ ., data = data_lm[(1+32*(1-1)):(32+32*(1-1)),])
+summary(fit)
+coef(summary(fit))[,1]
+anova(fit)
+
+# the most significant genes
+f2 %>% select(gene, coef.medium1, p.medium) %>% arrange(p.medium) %>% filter(p.medium<0.05) %>% head()
+f2 %>% select(gene, coef.temp1, p.temp) %>% arrange(p.temp) %>% filter(p.temp<0.05) %>% head()
+f2 %>% select(gene, coef.time30, coef.time60, coef.time120, p.time) %>% arrange(p.time) %>% filter(p.time<0.05) %>% head()
+# gene-specific intercept
+beta0 <- f2 %>% select(gene, beta0)
+```
+
+
+# Q2. Find motifs that are associated with genes that have different expression across design conditions (and are not associated with the ones that are not differentially expressed).
+
+## Linear models
+
+```{r}
+################## Interaction ##################
+
+# construct the dataset
+data_3 <- data %>% # 4912 genes and 32 conditions
+  filter(time != 0, time != 180) %>%
+  arrange(gene, code)
+data_3 <- merge(beta0, data_3, by = "gene")
+y <- log(data_3$tpm+1) - data_3$beta0
+data_3 <- cbind(y, data_3)
+data_A <- data_3 %>%
+  filter(rep == "A") %>%
+  select(gene, y, rep)
+data_B <- data_3 %>%
+  filter(rep == "B") %>%
+  select(gene, y, rep)
+
+motif_non_0 <- motif %>%
+  filter(Gene %in% gene_non_0$gene) %>%
+  arrange(Gene) # 4,912 × 257
+
+M_motif <- as.matrix(motif_non_0[,-1])
+#dim(M_motif) # 4912  256
+
+#design matrix
+M <- data.frame(medium = c(rep(0,8), rep(1,8)),
+                 temp = c(rep(0,4), rep(1,4), rep(0,4), rep(1,4)),
+                 time = c(rep(c(10,10,30,30,60,60,120,120),2)))
+M <- as.matrix(M)
+
+train_set <- NULL
+set.seed(123)
+ind <-  sort(sample(1:4912, 2000, replace = FALSE))
+for (i in ind) {
+  a <- as.data.frame(M %o% M_motif[i,])
+  train_set <- rbind(train_set, a)
+}
+
+y <- rep(0, 32000)
+for (i in 1:2000) {
+  y[(1+16*(i-1)):(16+16*(i-1))] <- data_A$y[(1+16*(ind[i]-1)):(16+16*(ind[i]-1))]
+}
+
+train_set <- cbind(y, train_set)
+dim(train_set)
+
+fit_1 <- lm(y ~ 0 + ., data = train_set) # can be used
+#summary(fit_1)
+data.frame(coef(summary(fit_1))) %>%
+  filter(`Pr...t..` < 0.05) # 150 interactions
+var <- data.frame(coef(summary(fit_1))) %>%
+  filter(`Pr...t..` < 0.05) %>%
+  row.names()
+```
+
+## Variable selection:
+
+```{r}
+# 150 covariates
+var <- data.frame(coef(summary(fit_1))) %>%
+  filter(`Pr...t..` < 0.05) %>%
+  rownames() # 180 variables, without medium
+var <- c(var, "y")
+
+train_set_2 <- train_set[, colnames(train_set) %in% var]
+fit_2 <- lm(y ~ 0 + ., data = train_set_2) # can be used
+#summary(fit_2) # R^2: 0.246
+
+# 83 covariates
+var <- data.frame(coef(summary(fit_2))) %>%
+  filter(`Pr...t..` < 0.05) %>%
+  rownames()
+var <- c(var, "y")
+train_set_3 <- train_set[, colnames(train_set) %in% var]
+fit_3 <- lm(y ~ 0 + ., data = train_set_3) # can be used
+#summary(fit_3) # 0.2431
+
+# # 77 covariates
+var <- data.frame(coef(summary(fit_3))) %>%
+  filter(`Pr...t..` < 0.05) %>%
+  rownames() # 180 variables, without medium
+var <- c(var, "y")
+train_set_4 <- train_set[, colnames(train_set) %in% var]
+fit_4 <- lm(y ~ 0 + ., data = train_set_4) # can be used
+#summary(fit_4) # 0.2429
+data.frame(coef(summary(fit_4))) %>%
+  filter(`Pr...t..` < 0.05) %>%
+  rownames()
+```
+
+## Display the motifs that are associated with gene expression:
+
+```{r}
+# motifs that are associated with gene expression
+sig_motif <- data.frame(motif = rep(NA, length(var)-1), 
+                        condition = rep(NA, length(var)-1))
+
+for (i in 1:(length(var)-1)){
+  # medium
+  if (substr(var[i], 1, 1)=="m"){
+    sig_motif$motif[i] <- substr(var[i], 8, 11)
+    sig_motif$condition[i] <- "medium"
+  }
+  # time or temp
+  else{
+    sig_motif$motif[i] <- substr(var[i], 6, 9)
+    sig_motif$condition[i] <- substr(var[i], 1, 4)
+  }
+}
+
+medium <- sig_motif %>%
+  filter(condition=="medium")
+
+temp <- sig_motif %>%
+  filter(condition=="temp")
+
+time <- sig_motif %>%
+  filter(condition=="time")
+
+
+sig_motif %>%
+  select(motif) %>%
+  distinct()
+
+intersect(medium$motif, time$motif)
+```
+
+## Prediction:
+
+```{r}
+test_set <- NULL
+set.seed(10000)
+ind2 <-  sort(sample(1:4912, 2000, replace = FALSE))
+for (i in ind2) {
+  a <- as.data.frame(M %o% M_motif[i,])
+  test_set <- rbind(test_set, a)
+}
+
+y <- rep(0, 32000)
+for (i in 1:2000) {
+  y[(1+16*(i-1)):(16+16*(i-1))] <- data_B$y[(1+16*(ind2[i]-1)):(16+16*(ind2[i]-1))]
+}
+test_set <- cbind(y, test_set)
+dim(test_set)
+
+pred <- predict(fit_1, newdata = test_set, type = "response")
+res <- test_set$y - pred
+mean(res^2) # 0.6872597
+
+pred <- predict(fit_2, newdata = test_set, type = "response")
+res <- test_set$y - pred
+mean(res^2) # 0.696816
+
+pred <- predict(fit_3, newdata = test_set, type = "response")
+res <- test_set$y - pred
+mean(res^2) # 0.6986582
+
+# be chose
+pred <- predict(fit_4, newdata = test_set, type = "response")
+res <- test_set$y - pred
+mean(res^2) # 0.6990289
+plot(res)
+abline(h=0, col="red", lwd=3, lty=3)
+```
+
+## Cross validation:
+
+```{r}
+num.folds <- 10
+
+lm_cv <- function(data, k, num.folds) {
+  pb = txtProgressBar(style = 3)
+  n <- nrow(data)
+  set.seed(k)
+  folds <- createFolds(data[,"y"], k = num.folds) # get indices of the test sets
+  fit <- NULL
+  pred <- NULL
+  MSE <- rep(0, num.folds)
+  for (f in 1:length(folds)) {
+    setTxtProgressBar(pb,f/num.folds)
+    fit[[f]] <- lm(y ~ 0 + ., data=data[-folds[[f]],])
+    # This is equivalent to doing 10, 90-10 splits we are fitting the model on all but 1/10th of the data ten times.
+    pred[[f]] <- predict(fit[[f]], newdata = data[folds[[f]],], type = "response")
+    res <- data[folds[[f]],][,"y"] - pred[[f]]
+    MSE[f] <- mean(res^2)
+  }
+  close(pb)
+  return(mean(MSE))
+}
+
+data_cv <- rbind(train_set, test_set)
+data_cv <- data_cv[, colnames(data_cv) %in% var]
+
+cv_results_1 <- lm_cv(data_cv, 123, 10)
+cv_results_2 <- lm_cv(data_cv, 1000, 10)
+cv_results_3 <- lm_cv(data_cv, 2021, 10)
+cv_results_4 <- lm_cv(data_cv, 806, 10)
+cv_results_5 <- lm_cv(data_cv, 12345, 10)
+round(cv_results_1, 5)
+round(cv_results_2, 5)
+round(cv_results_3, 5)
+round(cv_results_4, 5)
+round(cv_results_5, 5)
+```
